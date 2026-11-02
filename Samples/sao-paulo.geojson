@@ -1,0 +1,53 @@
+{
+  "type": "FeatureCollection",
+  "name": "São Paulo field study",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "study-boundary",
+      "properties": {
+        "name": "Study boundary",
+        "category": "Study area",
+        "description": "Example boundary with an excluded inner area.",
+        "stroke": "#69C3A8",
+        "stroke-width": 2,
+        "fill": "#69C3A8",
+        "fill-opacity": 0.24
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [[-46.72, -23.65], [-46.50, -23.65], [-46.50, -23.43], [-46.72, -23.43], [-46.72, -23.65]],
+          [[-46.64, -23.57], [-46.64, -23.51], [-46.58, -23.51], [-46.58, -23.57], [-46.64, -23.57]]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "field-route",
+      "properties": {
+        "name": "Field route",
+        "category": "Route",
+        "stroke": "#E8BC6A",
+        "stroke-width": 3
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-46.69, -23.62], [-46.66, -23.59], [-46.63, -23.60], [-46.57, -23.61]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "meeting-point",
+      "properties": {
+        "name": "Meeting point",
+        "category": "Field location",
+        "description": "Example point near Ibirapuera Park.",
+        "marker-color": "#D38AE4",
+        "visited": false,
+        "team_size": 4
+      },
+      "geometry": {"type": "Point", "coordinates": [-46.657, -23.588, 760]}
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+name: Check Mac app
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  mac-app:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Read repository
+        uses: actions/checkout@v4
+      - name: Show Swift version
+        run: swift --version
+      - name: Test import and geometry
+        run: swift test
+      - name: Build local app bundle
+        run: ./scripts/build-app.sh
+      - name: Store app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Geobra-mac
+          path: dist/Geobra-mac.zip
+          retention-days: 7
