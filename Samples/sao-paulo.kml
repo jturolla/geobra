@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>São Paulo field study</name>
+    <Style id="study-area">
+      <LineStyle><color>ffa8c369</color><width>2</width></LineStyle>
+      <PolyStyle><color>40a8c369</color><fill>1</fill><outline>1</outline></PolyStyle>
+    </Style>
+    <Style id="route">
+      <LineStyle><color>ff6abce8</color><width>3</width></LineStyle>
+    </Style>
+    <Folder>
+      <name>Study areas</name>
+      <open>1</open>
+      <Placemark id="study-boundary">
+        <name>Study boundary</name>
+        <description>Example boundary with an excluded inner area.</description>
+        <styleUrl>#study-area</styleUrl>
+        <ExtendedData>
+          <Data name="category"><value>Study area</value></Data>
+          <Data name="status"><value>Draft</value></Data>
+        </ExtendedData>
+        <Polygon>
+          <outerBoundaryIs><LinearRing><coordinates>
+            -46.72,-23.65,0 -46.50,-23.65,0 -46.50,-23.43,0 -46.72,-23.43,0 -46.72,-23.65,0
+          </coordinates></LinearRing></outerBoundaryIs>
+          <innerBoundaryIs><LinearRing><coordinates>
+            -46.64,-23.57,0 -46.64,-23.51,0 -46.58,-23.51,0 -46.58,-23.57,0 -46.64,-23.57,0
+          </coordinates></LinearRing></innerBoundaryIs>
+        </Polygon>
+      </Placemark>
+      <Folder>
+        <name>Field visits</name>
+        <Placemark id="meeting-point">
+          <name>Meeting point</name>
+          <description>Example point near Ibirapuera Park.</description>
+          <Point><coordinates>-46.657,-23.588,760</coordinates></Point>
+        </Placemark>
+      </Folder>
+    </Folder>
+    <Folder>
+      <name>Routes</name>
+      <Placemark id="field-route">
+        <name>Field route</name>
+        <styleUrl>#route</styleUrl>
+        <LineString><coordinates>
+          -46.69,-23.62,0 -46.66,-23.59,0 -46.63,-23.60,0 -46.57,-23.61,0
+        </coordinates></LineString>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>
