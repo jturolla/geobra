@@ -1,7 +1,7 @@
 # Geobra
 
 Geobra is a native Mac app for geographic files. It imports KML, KMZ, and GeoJSON into one GeoJSON model.
-A native sidebar keeps data layers, folders, and features organized. A large 3D globe displays online maps and visible features.
+A native sidebar keeps data layers, folders, and features organized. A large 3D globe shows online maps and visible features.
 
 The app uses SwiftUI, AppKit, and SceneKit. Its sidebar, toolbar, inspector, and settings follow the system appearance.
 OpenStreetMap works without an account. Google Maps requires an API key. The app uses no web runtime.
@@ -48,14 +48,19 @@ For direct development, use `swift run Geobra` or open `Package.swift` in Xcode.
 - Expand folders to find features.
 - Change visibility with the visibility control beside a folder or feature.
 - Select a feature to inspect its properties.
-- Use the folder controls to create folders, rename items, and move items.
+- Select several places with Command-click or Shift-click.
+- Drag selected places into a folder. Drag between siblings to change their order.
+- Press Return to rename the selected place. Press Escape to cancel the name change.
+- Select Places > New Folder with Selection to group the selected places.
+- Use Edit > Undo or Edit > Redo to reverse or repeat workspace edits.
+- Use the Inspector button to inspect a single place or a group of selected places.
 - Export a folder as GeoJSON.
 - Use the globe controls to change the view.
 - Select Open Sample Project in an empty workspace to explore the built-in example.
 
 ## Map sources and layers
 
-Select a map source from the toolbar or the sidebar. Source changes preserve the camera and imported data.
+Select a source from the map menu in the toolbar. Source changes preserve the camera and imported data.
 
 | Source | Content | Access |
 | --- | --- | --- |
@@ -64,7 +69,7 @@ Select a map source from the toolbar or the sidebar. Source changes preserve the
 | Google Satellite | Satellite imagery | Google Maps Tile API key. |
 | Google Hybrid | Satellite imagery with roads and labels | Google Maps Tile API key. |
 
-Use the Basemap and Coordinate Grid controls to change reference layers.
+Use Show Basemap and Show Coordinate Grid in the map menu to change reference layers.
 Each imported folder is a separate data layer. Its visibility control also applies to its child folders and features.
 GeoJSON URL imports load a local copy. They do not refresh automatically.
 
@@ -74,7 +79,7 @@ Google Maps usage can incur charges. The app does not create a cloud project or 
 See [Google API setup](https://developers.google.com/maps/documentation/tile/get-api-key).
 
 Map requests identify the current viewport to the selected provider. They do not upload imported feature properties or source files.
-The app displays provider attribution with the map. OpenStreetMap requests use an app-specific User-Agent and honor HTTP cache headers.
+The app shows provider attribution with the map. OpenStreetMap requests use an app-specific User-Agent and honor HTTP cache headers.
 Google sessions use the official Map Tiles API, with a memory-only HTTP cache.
 The app requests tiles for the visible viewport. It provides no bulk download or offline map feature.
 

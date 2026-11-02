@@ -8,26 +8,49 @@ struct InspectorView: View {
     @State private var draftName = ""
     @State private var editingSelection: PlaceSelection?
     @State private var confirmsDeletion = false
+    @State private var deletionSelections = Set<PlaceSelection>()
 
     var body: some View {
         Group {
-            if store.selectedFeature != nil || store.selectedFolder != nil {
+            if store.selections.count > 1 {
+                multipleSelectionForm
+            } else if store.selectedFeature != nil || store.selectedFolder != nil {
                 inspectorForm
             } else {
-                ContentUnavailableView(
-                    "No Selection",
-                    systemImage: "sidebar.right",
-                    description: Text("Select a folder or feature to inspect its details.")
-                )
+                Text("Select an item to inspect it.")
+                    .foregroundStyle(.secondary)
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         .onAppear(perform: synchronizeName)
-        .onChange(of: store.selection) { _, _ in synchronizeName() }
-        .confirmationDialog("Delete this item?", isPresented: $confirmsDeletion, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { store.deleteSelection() }
-        } message: {
-            Text("This removes the selected item and its contents from the workspace.")
+        .onChange(of: selectedName) { _, _ in synchronizeName() }
+        .onChange(of: store.selections) { _, _ in
+            synchronizeName()
+            confirmsDeletion = false
+            deletionSelections.removeAll()
         }
+        .confirmationDialog(deletionTitle, isPresented: $confirmsDeletion, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                guard store.selections == deletionSelections else { return }
+                store.deleteSelections()
+            }
+        } message: {
+            Text("This removes the selected items and their contents from the workspace. You can undo this change.")
+        }
+    }
+
+    private var multipleSelectionForm: some View {
+        Form {
+            Section("Selection") {
+                LabeledContent("Items", value: store.selections.count.formatted())
+                LabeledContent("Features", value: store.selectedFeatureIDs.count.formatted())
+            }
+            organization
+            visibilityActions
+            selectionActions
+        }
+        .formStyle(.grouped)
     }
 
     private var inspectorForm: some View {
@@ -51,31 +74,56 @@ struct InspectorView: View {
                 }
             }
 
-            Section("Organization") {
-                Menu("Move to Folder") {
-                    if store.selectedFolder != nil {
-                        Button("My Places") { store.moveSelection(to: nil) }
-                        Divider()
-                    }
-                    ForEach(availableFolders, id: \.id) { folder in
-                        Button(folder.name) { store.moveSelection(to: folder.id) }
-                    }
-                    if availableFolders.isEmpty {
-                        Text("Create a destination folder first.")
-                    }
-                }
-            }
-
-            Section("Actions") {
-                Button("Show on Globe", systemImage: "scope", action: store.focusSelection)
-                    .disabled(!canFocusSelection)
-                Button("Export GeoJSON…", systemImage: "square.and.arrow.up", action: store.exportGeoJSON)
-                Button("Delete Item…", systemImage: "trash", role: .destructive) {
-                    confirmsDeletion = true
-                }
-            }
+            organization
+            visibilityActions
+            selectionActions
         }
         .formStyle(.grouped)
+    }
+
+    private var organization: some View {
+        Section("Organization") {
+            Menu("Move to Folder") {
+                if store.canMove(store.selections, to: nil) {
+                    Button("My Places") { store.move(store.selections, to: nil) }
+                    Divider()
+                }
+                ForEach(availableFolders, id: \.id) { folder in
+                    Button(folder.name) { store.move(store.selections, to: folder.id) }
+                }
+                if availableFolders.isEmpty {
+                    Text("Create a destination folder first.")
+                }
+            }
+            Button("New Folder with Selection", systemImage: "folder.badge.plus", action: store.groupSelection)
+        }
+    }
+
+    private var visibilityActions: some View {
+        Section("Visibility") {
+            Button("Show on Map", systemImage: "eye") { store.setSelectedVisibility(true) }
+            Button("Hide on Map", systemImage: "eye.slash") { store.setSelectedVisibility(false) }
+        }
+    }
+
+    private var selectionActions: some View {
+        Section("Actions") {
+            Button("Show on Globe", systemImage: "scope", action: store.focusSelection)
+                .disabled(!canFocusSelection)
+            Button("Export GeoJSON…", systemImage: "square.and.arrow.up", action: store.exportGeoJSON)
+            Button(deleteActionTitle, systemImage: "trash", role: .destructive) {
+                deletionSelections = store.selections
+                confirmsDeletion = true
+            }
+        }
+    }
+
+    private var deletionTitle: String {
+        deletionSelections.count == 1 ? "Delete this item?" : "Delete these items?"
+    }
+
+    private var deleteActionTitle: String {
+        store.selections.count == 1 ? "Delete Item…" : "Delete Items…"
     }
 
     @ViewBuilder
@@ -114,36 +162,33 @@ struct InspectorView: View {
     }
 
     private var canFocusSelection: Bool {
-        store.selectedFeature?.geometry != nil
-            || store.selectedFolder?.allFeatures.contains { $0.geometry != nil } == true
+        let selectedIDs = store.selectedFeatureIDs
+        return store.workspace.folders.lazy.flatMap(\.allFeatures).contains {
+            selectedIDs.contains($0.id) && $0.geometry != nil
+        }
     }
 
     private var availableFolders: [(id: UUID, name: String)] {
-        guard let selected = store.selectedFolder else { return store.folderOptions }
-        let excluded = descendantIDs(selected)
-        return store.folderOptions.filter { !excluded.contains($0.id) }
-    }
-
-    private func descendantIDs(_ folder: GeoFolder) -> Set<UUID> {
-        folder.children.reduce(into: Set([folder.id])) { result, child in
-            result.formUnion(descendantIDs(child))
-        }
+        store.folderOptions.filter { store.canMove(store.selections, to: $0.id) }
     }
 
     private func synchronizeName() {
         editingSelection = store.selection
-        draftName = store.selectedFeature?.name ?? store.selectedFolder?.name ?? ""
+        draftName = selectedName
+    }
+
+    private var selectedName: String {
+        store.selectedFeature?.name ?? store.selectedFolder?.name ?? ""
     }
 
     private var hasNameChange: Bool {
         let name = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let currentName = store.selectedFeature?.name ?? store.selectedFolder?.name ?? ""
-        return editingSelection == store.selection && !name.isEmpty && name != currentName
+        return editingSelection == store.selection && !name.isEmpty && name != selectedName
     }
 
     private func saveName() {
-        guard editingSelection == store.selection, hasNameChange else { return }
-        store.renameSelection(draftName)
+        guard let item = editingSelection, item == store.selection, hasNameChange else { return }
+        store.rename(item, to: draftName)
         synchronizeName()
     }
 

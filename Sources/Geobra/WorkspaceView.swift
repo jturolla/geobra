@@ -1,9 +1,11 @@
+import AppKit
 import GeobraCore
 import SwiftUI
 
 struct WorkspaceView: View {
     @Bindable var store: WorkspaceStore
     @Bindable var maps: MapSettings
+    @Environment(\.undoManager) private var undoManager
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var isDropTargeted = false
     @State private var showsDataSourceSheet = false
@@ -17,13 +19,17 @@ struct WorkspaceView: View {
         } detail: {
             globe
                 .navigationTitle("Geobra")
-                .navigationSubtitle(store.selectedFeature?.name ?? store.selectedFolder?.name ?? "My Places")
+                .navigationSubtitle(store.selections.count > 1
+                                    ? "\(store.selections.count) places selected"
+                                    : store.selectedFeature?.name ?? store.selectedFolder?.name ?? "My Places")
                 .toolbar { workspaceToolbar }
         }
         .inspector(isPresented: $store.showInspector) {
             InspectorView(store: store)
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 400)
         }
+        .onAppear { store.undoManager = undoManager }
+        .onChange(of: undoManager) { _, manager in store.undoManager = manager }
         .sheet(isPresented: $showsDataSourceSheet) {
             AddDataSourceView(store: store)
         }
@@ -53,31 +59,22 @@ struct WorkspaceView: View {
     }
 
     private var sidebar: some View {
-        List(selection: $store.selection) {
-            Section("Map Source") {
-                Picker("Source", selection: $maps.source) {
-                    ForEach(MapSource.allCases) { source in
-                        Text(source.displayName).tag(source)
-                    }
-                }
-                Toggle("Basemap", isOn: $maps.isBasemapVisible)
-                Toggle("Coordinate Grid", isOn: $maps.showsGrid)
-                SettingsLink {
-                    Label("Source Settings…", systemImage: "gearshape")
-                }
-            }
-            Section("Data Layers") {
-                ForEach(store.workspace.folders) { folder in
-                    FolderRow(folder: folder, store: store)
-                }
-                if store.workspace.folders.isEmpty {
-                    Text("No data layers")
-                        .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            if store.workspace.folders.isEmpty {
+                ContentUnavailableView {
+                    Label("My Places", systemImage: "folder")
+                } description: {
+                    Text("Import geographic files to organize your places.")
+                } actions: {
+                    Button("Import Files…", action: store.chooseImport)
+                        .disabled(store.isImporting)
                     Button("Open Sample Project", action: store.loadSample)
                 }
+            } else {
+                PlacesOutlineView(store: store)
             }
         }
-        .listStyle(.sidebar)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .searchable(text: $store.search, placement: .sidebar, prompt: "Filter Places")
         .overlay {
             if !store.search.isEmpty && !store.workspace.folders.contains(where: { matches($0, query: store.search) }) {
@@ -87,30 +84,54 @@ struct WorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             HStack {
-                Text("\(store.featureCount) features")
+                Text(store.selections.isEmpty
+                     ? "\(store.featureCount) features"
+                     : "\(store.selections.count) selected")
                 Spacer()
-                Image(systemName: "internaldrive")
-                    .help("The workspace saves automatically on this Mac.")
+                Menu {
+                    Button("New Folder", action: store.addFolder)
+                    Button("New Folder with Selection", action: store.groupSelection)
+                        .disabled(store.selections.isEmpty)
+                    Divider()
+                    Button("Export GeoJSON…", action: store.exportGeoJSON)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Place actions")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
-            .padding(10)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .background(.bar)
         }
-        .navigationTitle("Places")
+        .navigationTitle("My Places")
     }
 
     private var globe: some View {
         GlobeView(
             features: store.visibleFeatures,
             selectedID: store.selectedID,
+            selectedIDs: store.selectedFeatureIDs,
             focusID: store.focusID,
             focusGeometry: store.focusGeometry,
             focusRevision: store.focusRevision,
             resetRevision: store.resetRevision,
             zoomRevision: store.zoomRevision,
             mapConfiguration: maps.configuration,
-            onSelect: { store.selection = $0.map(PlaceSelection.feature) },
+            onSelect: { id in
+                if NSEvent.modifierFlags.contains(.command) {
+                    if let id {
+                        let item = PlaceSelection.feature(id)
+                        if store.selections.contains(item) { store.selections.remove(item) }
+                        else { store.selections.insert(item) }
+                    }
+                } else {
+                    store.selection = id.map(PlaceSelection.feature)
+                }
+            },
             onMapStatus: { mapStatus = $0 },
             onMapAttribution: { mapAttribution = $0.text }
         )
@@ -168,25 +189,32 @@ struct WorkspaceView: View {
                 Label("New Folder", systemImage: "folder.badge.plus")
             }
             .help("Create a folder (⇧⌘N)")
-            Button(action: store.exportGeoJSON) {
-                Label("Export GeoJSON", systemImage: "square.and.arrow.up")
+            Button(action: store.focusSelection) {
+                Label("Show Selection", systemImage: "scope")
             }
-            .help("Export GeoJSON (⇧⌘E)")
+            .disabled(store.selectedFeatureIDs.isEmpty)
+            .help("Show the selected places on the globe (⌘J)")
         }
         ToolbarItem {
-            Picker("Map Source", selection: $maps.source) {
-                ForEach(MapSource.allCases) { source in
-                    Text(source.displayName).tag(source)
+            Menu {
+                Picker("Source", selection: $maps.source) {
+                    ForEach(MapSource.allCases) { source in
+                        Text(source.displayName).tag(source)
+                    }
                 }
+                Divider()
+                Toggle("Show Basemap", isOn: $maps.isBasemapVisible)
+                Toggle("Show Coordinate Grid", isOn: $maps.showsGrid)
+                Divider()
+                Button("Reload Map", action: maps.reloadMap)
+                    .keyboardShortcut("r", modifiers: .command)
+                SettingsLink { Text("Source Settings…") }
+            } label: {
+                Label(maps.source.displayName, systemImage: "map")
             }
-            .help("Select the basemap source")
+            .help("Map source and reference layers")
         }
         ToolbarItemGroup {
-            Button(action: maps.reloadMap) {
-                Label("Reload Map", systemImage: "arrow.clockwise")
-            }
-            .keyboardShortcut("r", modifiers: .command)
-            .help("Reload the map after a connection failure (⌘R)")
             Button { store.zoomRevision -= 1 } label: {
                 Label("Zoom Out", systemImage: "minus.magnifyingglass")
             }
@@ -203,84 +231,6 @@ struct WorkspaceView: View {
                 Label("Inspector", systemImage: "sidebar.right")
             }
             .help("Show or hide the inspector")
-        }
-    }
-}
-
-private struct FolderRow: View {
-    let folder: GeoFolder
-    @Bindable var store: WorkspaceStore
-    @State private var isExpanded = true
-
-    var body: some View {
-        if matches(folder, query: store.search) {
-            DisclosureGroup(isExpanded: Binding(
-                get: { isExpanded || !store.search.isEmpty },
-                set: { isExpanded = $0 }
-            )) {
-                ForEach(folder.children) { child in
-                    FolderRow(folder: child, store: store)
-                }
-                ForEach(folder.features.filter { store.search.isEmpty || $0.name.localizedCaseInsensitiveContains(store.search) }) { feature in
-                    placeLabel(feature.name, symbol: geometrySymbol(feature.geometry), visible: feature.isVisible) {
-                        store.toggleFeature(feature.id)
-                    }
-                    .tag(PlaceSelection.feature(feature.id))
-                    .simultaneousGesture(TapGesture(count: 2).onEnded {
-                        store.selection = .feature(feature.id)
-                        store.focusSelection()
-                    })
-                    .contextMenu { actions(for: .feature(feature.id)) }
-                }
-            } label: {
-                placeLabel(folder.name, symbol: "folder", visible: folder.isVisible) {
-                    store.toggleFolder(folder.id)
-                }
-                .simultaneousGesture(TapGesture(count: 2).onEnded {
-                    store.selection = .folder(folder.id)
-                    store.focusSelection()
-                })
-            }
-            .tag(PlaceSelection.folder(folder.id))
-            .contextMenu { actions(for: .folder(folder.id)) }
-        }
-    }
-
-    private func placeLabel(_ name: String, symbol: String, visible: Bool, toggle: @escaping () -> Void) -> some View {
-        HStack {
-            Label(name, systemImage: symbol)
-                .lineLimit(1)
-                .foregroundStyle(visible ? .primary : .secondary)
-            Spacer(minLength: 4)
-            Toggle("Show \(name) on Globe", isOn: Binding(
-                get: { visible },
-                set: { _ in toggle() }
-            ))
-            .labelsHidden()
-            .toggleStyle(.checkbox)
-            .help(visible ? "Hide on globe" : "Show on globe")
-        }
-    }
-
-    @ViewBuilder
-    private func actions(for selection: PlaceSelection) -> some View {
-        Button("Show on Globe") {
-            store.selection = selection
-            store.focusSelection()
-        }
-        Button("Export GeoJSON…") {
-            store.selection = selection
-            store.exportGeoJSON()
-        }
-    }
-
-    private func geometrySymbol(_ geometry: GeoGeometry?) -> String {
-        switch geometry {
-        case .point, .multiPoint: return "mappin"
-        case .lineString, .multiLineString: return "point.topleft.down.to.point.bottomright.curvepath"
-        case .polygon, .multiPolygon: return "pentagon"
-        case .geometryCollection: return "square.stack.3d.up"
-        case nil: return "doc"
         }
     }
 }

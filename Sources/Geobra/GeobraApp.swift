@@ -8,7 +8,7 @@ struct GeobraApp: App {
     @State private var maps = MapSettings()
 
     var body: some Scene {
-        WindowGroup("Geobra") {
+        Window("Geobra", id: "workspace") {
             WorkspaceView(store: store, maps: maps)
                 .frame(minWidth: 950, minHeight: 600)
                 .onOpenURL { store.openURL($0) }
@@ -32,8 +32,22 @@ struct GeobraApp: App {
             CommandMenu("Places") {
                 Button("New Folder", action: store.addFolder)
                     .keyboardShortcut("n", modifiers: [.command, .shift])
+                Button("New Folder with Selection", action: store.groupSelection)
+                    .keyboardShortcut("n", modifiers: [.command, .control])
+                    .disabled(store.selections.isEmpty)
+                Button("Rename", action: store.requestRename)
+                    .disabled(store.selections.count != 1)
+                Divider()
                 Button("Show Selection on Globe", action: store.focusSelection)
                     .keyboardShortcut("j", modifiers: .command)
+                    .disabled(store.selectedFeatureIDs.isEmpty)
+                Button("Show Selection") { store.setSelectedVisibility(true) }
+                    .disabled(store.selections.isEmpty)
+                Button("Hide Selection") { store.setSelectedVisibility(false) }
+                    .disabled(store.selections.isEmpty)
+                Button("Delete Selection", role: .destructive, action: store.deleteSelections)
+                    .disabled(store.selections.isEmpty)
+                Divider()
                 Button("Reset Globe", action: store.resetGlobe)
                     .keyboardShortcut("0", modifiers: .command)
             }

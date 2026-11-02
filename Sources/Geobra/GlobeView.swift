@@ -6,6 +6,7 @@ import GeobraCore
 struct GlobeView: NSViewRepresentable {
     let features: [GeoFeature]
     let selectedID: UUID?
+    var selectedIDs: Set<UUID> = []
     let focusID: UUID?
     var focusGeometry: GeoGeometry? = nil
     let focusRevision: Int
@@ -25,7 +26,7 @@ struct GlobeView: NSViewRepresentable {
         view.onMapStatus = onMapStatus
         view.onMapAttribution = onMapAttribution
         view.updateMap(configuration: mapConfiguration)
-        view.update(features: features, selectedID: selectedID)
+        view.update(features: features, selectedID: selectedID, selectedIDs: selectedIDs)
         if view.focusRevision != focusRevision {
             view.focusRevision = focusRevision
             if let geometry = focusGeometry {
@@ -62,7 +63,7 @@ final class GlobeSceneView: SCNView {
     private var mapConfiguration = MapConfiguration()
     private var mapUpdate: Task<Void, Never>?
     private var features: [GeoFeature] = []
-    private var selectedID: UUID?
+    private var selectedIDs = Set<UUID>()
     private var polygonTextureDimension = 1536
     private var selectedPolygonTextureDimension = 1536
     private var longitude = -48.0
@@ -180,12 +181,13 @@ final class GlobeSceneView: SCNView {
         scene.rootNode.addChildNode(node)
     }
 
-    func update(features: [GeoFeature], selectedID: UUID?) {
-        guard self.features != features || self.selectedID != selectedID else { return }
+    func update(features: [GeoFeature], selectedID: UUID?, selectedIDs: Set<UUID> = []) {
+        let selection = selectedIDs.union(selectedID.map { [$0] } ?? [])
+        guard self.features != features || self.selectedIDs != selection else { return }
         self.features = features
-        self.selectedID = selectedID
-        let selectedCount = features.filter { $0.id == selectedID }.reduce(0) { $0 + polygonCount($1.geometry) }
-        let otherCount = features.filter { $0.id != selectedID }.reduce(0) { $0 + polygonCount($1.geometry) }
+        self.selectedIDs = selection
+        let selectedCount = features.filter { selection.contains($0.id) }.reduce(0) { $0 + polygonCount($1.geometry) }
+        let otherCount = features.filter { !selection.contains($0.id) }.reduce(0) { $0 + polygonCount($1.geometry) }
         let sharedPixelBudget = 8_000_000.0
         let normalPixelBudget = selectedCount > 0 ? sharedPixelBudget / 2 : sharedPixelBudget
         polygonTextureDimension = textureDimension(count: otherCount, pixelBudget: normalPixelBudget)
@@ -196,7 +198,7 @@ final class GlobeSceneView: SCNView {
         lineNodes.removeAll()
         for feature in features {
             guard let geometry = feature.geometry else { continue }
-            addGeometry(geometry, feature: feature, selected: feature.id == selectedID)
+            addGeometry(geometry, feature: feature, selected: selection.contains(feature.id))
         }
         updatePointScale()
     }
@@ -237,7 +239,7 @@ final class GlobeSceneView: SCNView {
     private func addPoint(_ coordinate: Coordinate, feature: GeoFeature, selected: Bool) {
         let sphere = SCNSphere(radius: selected ? 0.009 : 0.006)
         sphere.segmentCount = 12
-        let material = overlayMaterial(color: selected ? .white : feature.style.colorHex.globeColor)
+        let material = overlayMaterial(color: selected ? .controlAccentColor : feature.style.colorHex.globeColor)
         sphere.materials = [material]
         let node = SCNNode(geometry: sphere)
         node.position = GlobeMesh.position(longitude: coordinate.longitude, latitude: coordinate.latitude, radius: 1.0006)
@@ -252,7 +254,7 @@ final class GlobeSceneView: SCNView {
         guard coordinates.count > 1, feature.style.lineWidth > 0 else { return }
         let radius = selected ? 1.0007 : 1.0004
         let geometry = pathGeometry([coordinates], radius: radius)
-        let material = overlayMaterial(color: selected ? .white : feature.style.colorHex.globeColor)
+        let material = overlayMaterial(color: selected ? .controlAccentColor : feature.style.colorHex.globeColor)
         geometry?.materials = [material]
         let node = SCNNode(geometry: geometry)
         node.name = feature.id.uuidString
@@ -661,7 +663,7 @@ private struct PolygonPatch {
         context.scaleBy(x: 1, y: -1)
         let path = makePath(width: Double(width), height: Double(height))
         context.addPath(path)
-        let color = selected ? NSColor.white : style.colorHex.globeColor
+        let color = selected ? NSColor.controlAccentColor : style.colorHex.globeColor
         let opacity = max(0, min(1, style.fillOpacity))
         context.setFillColor(color.withAlphaComponent(selected ? max(0.2, opacity) : opacity).cgColor)
         context.fillPath(using: .evenOdd)
