@@ -31,6 +31,10 @@ The script creates a local app bundle and signs it with an ad hoc signature.
 It draws the app icon from native vector shapes during the build.
 It does not use an Apple account or a deployment credential. It does not publish or notarize the app.
 
+Use `dist/Geobra-mac.zip` to transfer the build. The script checks the signature after it extracts a fresh copy in temporary storage.
+Extract the ZIP outside a folder that syncs to cloud storage. For example, extract it in `/Applications`.
+Cloud file providers can add metadata that makes signature checks fail. The app in `dist/Geobra.app` remains available for local use.
+
 For a debug build, use `./scripts/build-app.sh debug`.
 For direct development, use `swift run Geobra` or open `Package.swift` in Xcode.
 
@@ -82,7 +86,10 @@ Build a release bundle:
 ./scripts/build-app.sh
 ```
 
-The GitHub workflow runs these checks on macOS. It stores the app as a workflow artifact and does not deploy it.
+These commands check the app locally. The build script creates a ZIP archive and checks its extracted signature before it copies the build to `dist`.
+
+A proposed GitHub Actions workflow is in `scripts/ci.example.yml`. Add it through an account that can create workflows.
+The example remains outside `.github/workflows`, so it does not run.
 
 ## Current limits
 

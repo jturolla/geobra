@@ -16,7 +16,7 @@ esac
 swift build --configuration "$configuration" --product Geobra
 binary_dir="$(swift build --configuration "$configuration" --show-bin-path)"
 app_dir="$repository_dir/dist/Geobra.app"
-staging_dir="$(mktemp -d "$repository_dir/dist-stage.XXXXXX")"
+staging_dir="$(mktemp -d "${TMPDIR:-/tmp}/geobra-build.XXXXXX")"
 trap 'rm -rf "$staging_dir"' EXIT
 
 mkdir -p "$staging_dir/Geobra.app/Contents/MacOS" "$staging_dir/Geobra.app/Contents/Resources"
@@ -121,8 +121,16 @@ xattr -cr "$staging_dir/Geobra.app"
 # Ad hoc signing identifies this local build without an Apple account.
 codesign --force --deep --sign - "$staging_dir/Geobra.app"
 codesign --verify --deep --strict "$staging_dir/Geobra.app"
+archive_path="$staging_dir/Geobra-mac.zip"
+ditto -c -k --norsrc --noextattr --keepParent "$staging_dir/Geobra.app" "$archive_path"
+extraction_dir="$staging_dir/archive-check"
+mkdir -p "$extraction_dir"
+ditto -x -k --norsrc --noextattr "$archive_path" "$extraction_dir"
+codesign --verify --deep --strict "$extraction_dir/Geobra.app"
+
 mkdir -p "$repository_dir/dist"
+cp "$archive_path" "$repository_dir/dist/Geobra-mac.zip"
 rm -rf "$app_dir"
-mv "$staging_dir/Geobra.app" "$app_dir"
-codesign --verify --deep --strict "$app_dir"
-echo "Built $app_dir"
+ditto --norsrc --noextattr "$staging_dir/Geobra.app" "$app_dir"
+echo "Transferable build: $repository_dir/dist/Geobra-mac.zip"
+echo "Local app: $app_dir"
