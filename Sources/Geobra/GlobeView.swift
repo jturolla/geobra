@@ -11,7 +11,10 @@ struct GlobeView: NSViewRepresentable {
     let focusRevision: Int
     let resetRevision: Int
     let zoomRevision: Int
+    var mapConfiguration = MapConfiguration()
     let onSelect: (UUID?) -> Void
+    var onMapStatus: ((String) -> Void)? = nil
+    var onMapAttribution: ((MapAttribution) -> Void)? = nil
 
     func makeNSView(context: Context) -> GlobeSceneView {
         GlobeSceneView(frame: .zero)
@@ -19,6 +22,9 @@ struct GlobeView: NSViewRepresentable {
 
     func updateNSView(_ view: GlobeSceneView, context: Context) {
         view.onSelect = onSelect
+        view.onMapStatus = onMapStatus
+        view.onMapAttribution = onMapAttribution
+        view.updateMap(configuration: mapConfiguration)
         view.update(features: features, selectedID: selectedID)
         if view.focusRevision != focusRevision {
             view.focusRevision = focusRevision
@@ -42,6 +48,8 @@ struct GlobeView: NSViewRepresentable {
 
 final class GlobeSceneView: SCNView {
     var onSelect: ((UUID?) -> Void)?
+    var onMapStatus: ((String) -> Void)?
+    var onMapAttribution: ((MapAttribution) -> Void)?
     var focusRevision = 0
     var resetRevision = 0
     var zoomRevision = 0
@@ -49,6 +57,10 @@ final class GlobeSceneView: SCNView {
     private let globe = SCNNode()
     private let overlays = SCNNode()
     private let cameraNode = SCNNode()
+    private let grid = SCNNode()
+    private var tileLayer: GlobeTileLayer?
+    private var mapConfiguration = MapConfiguration()
+    private var mapUpdate: Task<Void, Never>?
     private var features: [GeoFeature] = []
     private var selectedID: UUID?
     private var polygonTextureDimension = 1536
@@ -57,6 +69,10 @@ final class GlobeSceneView: SCNView {
     private var latitude = -14.0
     private var distance = 3.15
     private var pointNodes: [SCNNode] = []
+    private var surfaceNodes: [(node: SCNNode, radius: Double)] = []
+    private var lineNodes: [(node: SCNNode, coordinates: [Coordinate], radius: Double, material: SCNMaterial)] = []
+    private var gridPaths: [[Coordinate]] = []
+    private var lineClip: GlobeLineClip?
     private var dragStart: NSPoint?
     private var dragDistance: CGFloat = 0
 
@@ -81,10 +97,11 @@ final class GlobeSceneView: SCNView {
         rendersContinuously = false
         allowsCameraControl = false
         autoenablesDefaultLighting = false
+        usesReverseZ = true
 
         cameraNode.camera = SCNCamera()
         cameraNode.camera?.fieldOfView = 42
-        cameraNode.camera?.zNear = 0.0005
+        cameraNode.camera?.zNear = 0.0001
         cameraNode.camera?.zFar = 150
         cameraNode.camera?.wantsHDR = false
         cameraNode.camera?.exposureOffset = 0.12
@@ -98,13 +115,7 @@ final class GlobeSceneView: SCNView {
         )
         let material = SCNMaterial()
         material.lightingModel = .constant
-        let resources = Bundle.main.url(forResource: "Geobra_Geobra", withExtension: "bundle")
-            .flatMap(Bundle.init(url:)) ?? Bundle.module
-        if let url = resources.url(forResource: "earth-blue-marble", withExtension: "jpg") {
-            material.diffuse.contents = NSImage(contentsOf: url)
-        } else {
-            material.diffuse.contents = NSColor(red: 0.07, green: 0.19, blue: 0.24, alpha: 1)
-        }
+        material.diffuse.contents = NSColor(white: 0.17, alpha: 1)
         material.diffuse.wrapS = .repeat
         material.diffuse.magnificationFilter = .linear
         material.diffuse.minificationFilter = .linear
@@ -113,8 +124,14 @@ final class GlobeSceneView: SCNView {
         globe.geometry = surface
         globe.name = "earth"
         globe.categoryBitMask = 1
+        globe.renderingOrder = -10
         scene.rootNode.addChildNode(globe)
         scene.rootNode.addChildNode(overlays)
+        scene.rootNode.addChildNode(grid)
+        configureGrid()
+        tileLayer = GlobeTileLayer(parent: scene.rootNode)
+        tileLayer?.onStatus = { [weak self] in self?.onMapStatus?($0) }
+        tileLayer?.onAttribution = { [weak self] in self?.onMapAttribution?($0) }
         addAtmosphere(to: scene)
         addStars(to: scene)
         updateCamera(animated: false)
@@ -134,6 +151,7 @@ final class GlobeSceneView: SCNView {
             sphere.materials = [material]
             let node = SCNNode(geometry: sphere)
             node.categoryBitMask = 4
+            node.renderingOrder = -5
             scene.rootNode.addChildNode(node)
         }
     }
@@ -174,6 +192,8 @@ final class GlobeSceneView: SCNView {
         selectedPolygonTextureDimension = textureDimension(count: selectedCount, pixelBudget: sharedPixelBudget / 2)
         overlays.childNodes.forEach { $0.removeFromParentNode() }
         pointNodes.removeAll()
+        surfaceNodes.removeAll()
+        lineNodes.removeAll()
         for feature in features {
             guard let geometry = feature.geometry else { continue }
             addGeometry(geometry, feature: feature, selected: feature.id == selectedID)
@@ -223,29 +243,24 @@ final class GlobeSceneView: SCNView {
         node.position = GlobeMesh.position(longitude: coordinate.longitude, latitude: coordinate.latitude, radius: 1.0006)
         node.name = feature.id.uuidString
         node.categoryBitMask = 2
+        node.renderingOrder = 150
         overlays.addChildNode(node)
         pointNodes.append(node)
     }
 
     private func addLine(_ coordinates: [Coordinate], feature: GeoFeature, selected: Bool) {
         guard coordinates.count > 1, feature.style.lineWidth > 0 else { return }
-        let points = GlobeMesh.subdivide(coordinates)
-        let vertices = points.map {
-            GlobeMesh.position(longitude: $0.longitude, latitude: $0.latitude, radius: selected ? 1.0007 : 1.0004)
-        }
-        let source = SCNGeometrySource(vertices: vertices)
-        var indices: [Int32] = []
-        for index in 0..<(vertices.count - 1) {
-            indices.append(Int32(index))
-            indices.append(Int32(index + 1))
-        }
-        let element = SCNGeometryElement(indices: indices, primitiveType: .line)
-        let geometry = SCNGeometry(sources: [source], elements: [element])
-        geometry.materials = [overlayMaterial(color: selected ? .white : feature.style.colorHex.globeColor)]
+        let radius = selected ? 1.0007 : 1.0004
+        let geometry = pathGeometry([coordinates], radius: radius)
+        let material = overlayMaterial(color: selected ? .white : feature.style.colorHex.globeColor)
+        geometry?.materials = [material]
         let node = SCNNode(geometry: geometry)
         node.name = feature.id.uuidString
         node.categoryBitMask = 2
+        node.renderingOrder = 150
         overlays.addChildNode(node)
+        surfaceNodes.append((node, radius))
+        lineNodes.append((node, coordinates, radius, material))
     }
 
     private func addPolygon(_ rings: [[Coordinate]], feature: GeoFeature, selected: Bool) {
@@ -264,15 +279,17 @@ final class GlobeSceneView: SCNView {
         let material = SCNMaterial()
         material.lightingModel = .constant
         material.diffuse.contents = texture
-        material.isDoubleSided = true
+        material.isDoubleSided = false
+        material.readsFromDepthBuffer = false
         material.writesToDepthBuffer = false
         material.transparencyMode = .aOne
         geometry.materials = [material]
         let node = SCNNode(geometry: geometry)
         node.name = feature.id.uuidString
         node.categoryBitMask = 4
-        node.renderingOrder = selected ? 20 : 10
+        node.renderingOrder = selected ? 120 : 100
         overlays.addChildNode(node)
+        surfaceNodes.append((node, selected ? 1.0007 : 1.0004))
         rings.forEach { addLine($0, feature: feature, selected: selected) }
     }
 
@@ -295,7 +312,7 @@ final class GlobeSceneView: SCNView {
         latitude = (minimumLatitude + maximumLatitude) / 2
         let longitudeSpan = coordinates.map { abs(GlobeMesh.longitudeDifference($0.longitude, longitude)) }.max() ?? 0
         let angularSpan = max(maximumLatitude - minimumLatitude, longitudeSpan * 2 * cos(latitude * .pi / 180))
-        distance = min(3.2, max(1.015, 1 + angularSpan / 40))
+        distance = min(3.2, max(1.00003, 1 + angularSpan / 40))
         updateCamera(animated: true)
     }
 
@@ -307,12 +324,14 @@ final class GlobeSceneView: SCNView {
     }
 
     func zoom(by factor: Double) {
-        distance = min(8, max(1.008, 1 + (distance - 1) * factor))
+        distance = min(8, max(1.0000005, 1 + (distance - 1) * factor))
         updateCamera(animated: false)
     }
 
     private func updateCamera(animated: Bool) {
         latitude = min(89.5, max(-89.5, latitude))
+        longitude = WebMercator.normalizedLongitude(longitude)
+        cameraNode.camera?.zNear = min(0.0001, max(0.0000000001, (distance - 1) * 0.002))
         SCNTransaction.begin()
         SCNTransaction.animationDuration = animated ? 0.65 : 0
         cameraNode.position = GlobeMesh.position(longitude: longitude, latitude: latitude, radius: distance)
@@ -320,11 +339,128 @@ final class GlobeSceneView: SCNView {
         updatePointScale()
         SCNTransaction.commit()
         setNeedsDisplay(bounds)
+        scheduleMapUpdate(delay: animated ? 0.75 : 0.18)
     }
 
     private func updatePointScale() {
-        let scale = max(0.003, (distance - 1) / 2.15)
-        for node in pointNodes { node.scale = SCNVector3(scale, scale, scale) }
+        let scale = max(0.0000001, (distance - 1) / 2.15)
+        let surfaceRadius = 1 + min(0.0001, (distance - 1) * 0.002)
+        for node in pointNodes {
+            node.scale = SCNVector3(scale, scale, scale)
+            let length = sqrt(node.position.x * node.position.x + node.position.y * node.position.y + node.position.z * node.position.z)
+            if length > 0 {
+                node.position = SCNVector3(
+                    node.position.x / length * surfaceRadius,
+                    node.position.y / length * surfaceRadius,
+                    node.position.z / length * surfaceRadius
+                )
+            }
+        }
+        for surface in surfaceNodes {
+            let scale = surfaceRadius / surface.radius
+            surface.node.scale = SCNVector3(scale, scale, scale)
+        }
+        grid.scale = SCNVector3(surfaceRadius, surfaceRadius, surfaceRadius)
+    }
+
+    func updateMap(configuration: MapConfiguration) {
+        guard configuration != mapConfiguration else { return }
+        mapConfiguration = configuration
+        grid.isHidden = !configuration.showsGrid
+        scheduleMapUpdate(delay: 0)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            mapUpdate?.cancel()
+            tileLayer?.suspend()
+        } else {
+            scheduleMapUpdate(delay: 0.1)
+        }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = frame.size != newSize
+        super.setFrameSize(newSize)
+        if changed { scheduleMapUpdate(delay: 0.2) }
+    }
+
+    private func scheduleMapUpdate(delay: Double) {
+        mapUpdate?.cancel()
+        guard window != nil else { return }
+        mapUpdate = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            catch { return }
+            guard let self, !Task.isCancelled else { return }
+            self.refreshPaths()
+            let plan = GlobeProjection.plan(
+                in: self, longitude: self.longitude, latitude: self.latitude,
+                distance: self.distance, maximumZoom: self.mapConfiguration.source.maximumZoom
+            )
+            self.tileLayer?.update(configuration: self.mapConfiguration, plan: plan)
+            self.setNeedsDisplay(self.bounds)
+        }
+    }
+
+    private func configureGrid() {
+        for longitude in stride(from: -180, to: 180, by: 30) {
+            gridPaths.append((-90...90).map { Coordinate(longitude: Double(longitude), latitude: Double($0)) })
+        }
+        for latitude in stride(from: -60, through: 60, by: 30) {
+            gridPaths.append((-180...180).map { Coordinate(longitude: Double($0), latitude: Double(latitude)) })
+        }
+        grid.geometry = pathGeometry(gridPaths, radius: 1)
+        let material = SCNMaterial()
+        material.lightingModel = .constant
+        material.diffuse.contents = NSColor(white: 0.55, alpha: 0.55)
+        material.writesToDepthBuffer = false
+        grid.geometry?.materials = [material]
+        grid.categoryBitMask = 4
+        grid.renderingOrder = 50
+        grid.isHidden = !mapConfiguration.showsGrid
+    }
+
+    private func refreshPaths() {
+        lineClip = GlobeProjection.lineClip(in: self, longitude: longitude)
+        for line in lineNodes {
+            line.node.geometry = pathGeometry([line.coordinates], radius: line.radius)
+            line.node.geometry?.materials = [line.material]
+        }
+        let material = grid.geometry?.firstMaterial ?? overlayMaterial(color: NSColor(white: 0.55, alpha: 0.55))
+        grid.geometry = pathGeometry(gridPaths, radius: 1)
+        grid.geometry?.materials = [material]
+    }
+
+    private func pathGeometry(_ paths: [[Coordinate]], radius: Double) -> SCNGeometry? {
+        let offset = min(0.0001, (distance - 1) * 0.002)
+        let maximumAngle = min(0.5, max(0.00001, sqrt(8 * offset) * 180 / .pi * 0.7))
+        var vertices: [SCNVector3] = []
+        var indices: [Int32] = []
+        for coordinates in paths where coordinates.count > 1 {
+            for index in 1..<coordinates.count {
+                let start = coordinates[index - 1]
+                let end = coordinates[index]
+                let clipped: [Coordinate]
+                if let lineClip {
+                    guard let segment = lineClip.clip(start, end) else { continue }
+                    clipped = segment
+                } else {
+                    clipped = [start, end]
+                }
+                let points = GlobeMesh.subdivide(clipped, maximumAngle: lineClip == nil ? 0.5 : maximumAngle)
+                let firstIndex = vertices.count
+                vertices += points.map { GlobeMesh.position(longitude: $0.longitude, latitude: $0.latitude, radius: radius) }
+                for pointIndex in 0..<(points.count - 1) {
+                    indices += [Int32(firstIndex + pointIndex), Int32(firstIndex + pointIndex + 1)]
+                }
+            }
+        }
+        guard !vertices.isEmpty else { return nil }
+        return SCNGeometry(
+            sources: [SCNGeometrySource(vertices: vertices)],
+            elements: [SCNGeometryElement(indices: indices, primitiveType: .line)]
+        )
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -334,7 +470,7 @@ final class GlobeSceneView: SCNView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        let sensitivity = max(0.003, min(0.3, (distance - 1) * 0.13))
+        let sensitivity = max(0.00000002, min(0.3, (distance - 1) * 0.13))
         longitude -= Double(event.deltaX) * sensitivity
         latitude += Double(event.deltaY) * sensitivity
         dragDistance += abs(event.deltaX) + abs(event.deltaY)
@@ -361,20 +497,19 @@ final class GlobeSceneView: SCNView {
 
     private func select(at point: NSPoint) {
         let pointHits = hitTest(point, options: [.categoryBitMask: 2, .searchMode: SCNHitTestSearchMode.all.rawValue])
-        let earthHits = hitTest(point, options: [.categoryBitMask: 1, .searchMode: SCNHitTestSearchMode.closest.rawValue])
-        guard let earthHit = earthHits.first else {
+        guard let intersection = GlobeProjection.intersection(at: point, in: self) else {
             onSelect?(nil)
             return
         }
+        let earthPoint = SCNVector3(intersection.x, intersection.y, intersection.z)
         if let hit = pointHits.first,
-           distanceToCamera(hit.worldCoordinates) <= distanceToCamera(earthHit.worldCoordinates) + 0.005,
+           distanceToCamera(hit.worldCoordinates) <= distanceToCamera(earthPoint) + max(0.00000001, (distance - 1) * 0.005),
            let name = hit.node.name, let id = UUID(uuidString: name) {
             onSelect?(id)
             return
         }
-        let position = earthHit.worldCoordinates
-        let clickedLongitude = atan2(Double(position.x), Double(position.z)) * 180 / .pi
-        let clickedLatitude = asin(min(1, max(-1, Double(position.y)))) * 180 / .pi
+        let clickedLongitude = atan2(intersection.x, intersection.z) * 180 / .pi
+        let clickedLatitude = asin(min(1, max(-1, intersection.y))) * 180 / .pi
         for feature in features.reversed() {
             if let geometry = feature.geometry,
                contains(geometry, longitude: clickedLongitude, latitude: clickedLatitude) {
@@ -459,7 +594,7 @@ private enum GlobeMesh {
         )
     }
 
-    static func subdivide(_ coordinates: [Coordinate]) -> [Coordinate] {
+    static func subdivide(_ coordinates: [Coordinate], maximumAngle: Double = 0.5) -> [Coordinate] {
         guard let first = coordinates.first else { return [] }
         var result = [first]
         for index in 1..<coordinates.count {
@@ -467,7 +602,7 @@ private enum GlobeMesh {
             let end = coordinates[index]
             let longitudeDelta = longitudeDifference(end.longitude, start.longitude)
             let latitudeDelta = end.latitude - start.latitude
-            let count = max(1, Int(ceil(max(abs(longitudeDelta), abs(latitudeDelta)) / 0.5)))
+            let count = max(1, Int(ceil(max(abs(longitudeDelta), abs(latitudeDelta)) / maximumAngle)))
             for step in 1...count {
                 let fraction = Double(step) / Double(count)
                 result.append(Coordinate(

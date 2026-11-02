@@ -5,17 +5,19 @@ import SwiftUI
 struct GeobraApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var store = WorkspaceStore()
+    @State private var maps = MapSettings()
 
     var body: some Scene {
         WindowGroup("Geobra") {
-            WorkspaceView(store: store)
-                .frame(minWidth: 1000, minHeight: 650)
-                .preferredColorScheme(.dark)
+            WorkspaceView(store: store, maps: maps)
+                .frame(minWidth: 950, minHeight: 600)
                 .onOpenURL { store.openURL($0) }
         }
         .defaultSize(width: 1380, height: 880)
         .windowToolbarStyle(.unifiedCompact)
         .commands {
+            SidebarCommands()
+            InspectorCommands()
             CommandGroup(after: .newItem) {
                 Button("Import Geographic Files…", action: store.chooseImport)
                     .keyboardShortcut("i", modifiers: .command)
@@ -35,6 +37,9 @@ struct GeobraApp: App {
                 Button("Reset Globe", action: store.resetGlobe)
                     .keyboardShortcut("0", modifiers: .command)
             }
+        }
+        Settings {
+            MapSettingsView(settings: maps)
         }
     }
 }

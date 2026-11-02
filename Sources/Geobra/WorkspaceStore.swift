@@ -95,6 +95,27 @@ final class WorkspaceStore {
         }
     }
 
+    func importRemoteGeoJSON(from url: URL) {
+        guard !isImporting else { return }
+        isImporting = true
+        status = "Loading the GeoJSON data source…"
+        Task {
+            defer { isImporting = false }
+            do {
+                let loaded = try await RemoteGeoJSON.load(from: url)
+                let folder = importedCopy(of: loaded)
+                workspace.folders.append(folder)
+                selection = .folder(folder.id)
+                focusSelection()
+                persist()
+                status = "Loaded \(folder.featureCount) features from the data source"
+            } catch {
+                errorMessage = error.localizedDescription
+                status = "The data source could not load"
+            }
+        }
+    }
+
     func chooseWorkspace() {
         let panel = NSOpenPanel()
         panel.title = "Open Workspace"

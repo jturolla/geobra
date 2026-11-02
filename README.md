@@ -1,15 +1,17 @@
 # Geobra
 
 Geobra is a native Mac app for geographic files. It imports KML, KMZ, and GeoJSON into one GeoJSON model.
-A folder sidebar keeps places and features organized. A large 3D globe displays the visible features.
+A native sidebar keeps data layers, folders, and features organized. A large 3D globe displays online maps and visible features.
 
-This repository contains the first version. The app uses SwiftUI, AppKit, and SceneKit. It needs no web runtime or account.
+The app uses SwiftUI, AppKit, and SceneKit. Its sidebar, toolbar, inspector, and settings follow the system appearance.
+OpenStreetMap works without an account. Google Maps requires an API key. The app uses no web runtime.
 
 ## Requirements
 
 - macOS 14 or later.
 - Xcode 16 or later, with its command line tools selected.
 - Swift 6 or later.
+- An internet connection for online maps and remote GeoJSON sources.
 
 ## Build and run
 
@@ -41,6 +43,7 @@ For direct development, use `swift run Geobra` or open `Package.swift` in Xcode.
 ## Use the app
 
 - Import a `.kml`, `.kmz`, `.geojson`, or `.json` file with the Import button.
+- Select Import > Add GeoJSON URL to load an HTTPS GeoJSON data source.
 - Drag files into the window to import them.
 - Expand folders to find features.
 - Change visibility with the visibility control beside a folder or feature.
@@ -49,6 +52,33 @@ For direct development, use `swift run Geobra` or open `Package.swift` in Xcode.
 - Export a folder as GeoJSON.
 - Use the globe controls to change the view.
 - Select Open Sample Project in an empty workspace to explore the built-in example.
+
+## Map sources and layers
+
+Select a map source from the toolbar or the sidebar. Source changes preserve the camera and imported data.
+
+| Source | Content | Access |
+| --- | --- | --- |
+| OpenStreetMap | Street map | No API key. |
+| Google Maps | Street map | Google Maps Tile API key. |
+| Google Satellite | Satellite imagery | Google Maps Tile API key. |
+| Google Hybrid | Satellite imagery with roads and labels | Google Maps Tile API key. |
+
+Use the Basemap and Coordinate Grid controls to change reference layers.
+Each imported folder is a separate data layer. Its visibility control also applies to its child folders and features.
+GeoJSON URL imports load a local copy. They do not refresh automatically.
+
+Open Source Settings to save or delete a Google key. The key stays in the app-specific Keychain item on this Mac.
+It does not enter workspace files, exports, or UserDefaults. Enable the Map Tiles API for the key through your Google project.
+Google Maps usage can incur charges. The app does not create a cloud project or activate billing.
+See [Google API setup](https://developers.google.com/maps/documentation/tile/get-api-key).
+
+Map requests identify the current viewport to the selected provider. They do not upload imported feature properties or source files.
+The app displays provider attribution with the map. OpenStreetMap requests use an app-specific User-Agent and honor HTTP cache headers.
+Google sessions use the official Map Tiles API, with a memory-only HTTP cache.
+The app requests tiles for the visible viewport. It provides no bulk download or offline map feature.
+
+Provider documentation: [OpenStreetMap tile policy](https://operations.osmfoundation.org/policies/tiles/) and [Google Map Tiles API](https://developers.google.com/maps/documentation/tile/overview).
 
 The app saves the workspace locally at:
 
@@ -74,7 +104,7 @@ The sample boundaries illustrate import behavior. They are not survey data or of
 
 ## Check the source
 
-Run the import and geometry tests:
+Run the import, workspace, tile, and provider tests:
 
 ```bash
 swift test
@@ -93,8 +123,8 @@ The example remains outside `.github/workflows`, so it does not run.
 
 ## Current limits
 
-- The globe uses a bundled Earth texture. It works offline, but it provides limited detail at close zoom.
-- The app does not request imagery tiles, terrain, or elevation data.
+- Online map detail depends on provider coverage, zoom limits, network access, and credentials.
+- The app does not request terrain or elevation data.
 - The app preserves altitude values, but it draws overlays on the globe surface.
 - The app draws paths with positive line widths as native lines of one pixel in this version.
 - Decimal properties support about 38 significant digits.
@@ -103,4 +133,4 @@ The example remains outside `.github/workflows`, so it does not run.
 - GeoJSON coordinates use longitude and latitude in WGS 84. Reproject other coordinate systems before import.
 - The local bundle is for development. Distribution signing, notarization, and App Store packaging need a separate release process.
 
-Earth image credits and source details are in `Sources/Geobra/Resources/ASSET-SOURCES.md`.
+Attribution asset credits are in `Sources/Geobra/Resources/ASSET-SOURCES.md`.
